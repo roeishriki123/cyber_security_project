@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+
+{% block title %}Register{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h3 class="text-center">Register</h3>
+            </div>
+            <div class="card-body">
+                {% if error %}
+                    <div class="alert alert-danger text-center">
+                        {{ error }}
+                    </div>
+                {% endif %}
+                {% if message %}
+                    <div class="alert alert-success text-center">
+                        {{ message }}
+                    </div>
+                {% endif %}
+                <form method="POST" action="{{ route_prefix | default('', true) }}/register" class="needs-validation" novalidate>
+                    <div class="mb-3">
+                        <label for="username" class="form-label">Username</label>
+                        <input type="text" 
+                               class="form-control" 
+                               id="username" 
+                               name="username" 
+                               required
+                               oninvalid="this.setCustomValidity('Please enter a username')"
+                               oninput="this.setCustomValidity('')">
+                        <div class="invalid-feedback">
+                            Please enter a username
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="email" class="form-label">Email</label>
+                        <input type="email" 
+                               class="form-control" 
+                               id="email" 
+                               name="email" 
+                               required
+                               pattern="[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$"
+                               oninvalid="this.setCustomValidity('Please enter a valid email address')"
+                               oninput="this.setCustomValidity('')">
+                        <div class="invalid-feedback">
+                            Please enter a valid email address
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="phone" class="form-label">Phone Number</label>
+                        <input type="tel" 
+                               class="form-control" 
+                               id="phone" 
+                               name="phone" 
+                               required
+                               pattern="[0-9]{10}"
+                               oninvalid="this.setCustomValidity('Please enter a 10-digit phone number')"
+                               oninput="this.setCustomValidity('')">
+                        <div class="invalid-feedback">
+                            Please enter a 10-digit phone number
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="password" class="form-label">Password</label>
+                        <input type="password" 
+                               class="form-control" 
+                               id="password" 
+                               name="password" 
+                               required
+                               oninvalid="this.setCustomValidity('Please enter a password')"
+                               oninput="this.setCustomValidity('')">
+                        <div class="invalid-feedback">
+                            Please enter a password
+                        </div>
+                    </div>
+                    <div class="d-grid">
+                        <button type="submit" class="btn btn-primary">Register</button>
+                    </div>
+                </form>
+            </div>
+            <div class="card-footer text-center">
+                <p>Already have an account? <a href="{{ route_prefix | default('', true) }}/login">Login here</a>.</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Enable Bootstrap form validation
+(function () {
+    'use strict'
+    var forms = document.querySelectorAll('.needs-validation')
+    Array.prototype.slice.call(forms).forEach(function (form) {
+        form.addEventListener('submit', function (event) {
+            if (!form.checkValidity()) {
+                event.preventDefault()
+                event.stopPropagation()
+            }
+            form.classList.add('was-validated')
+        }, false)
+    })
+})()
+
+// Password validation function
+function validatePassword(input) {
+    const password = input.value;
+    const pattern = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*(),.?":{}|<>])[A-Za-z\d!@#$%^&*(),.?":{}|<>]{10,}$/;
+    const forbiddenWords = ['password', 'admin', '123456', 'qwerty'];
+    
+    // Reset custom validity
+    input.setCustomValidity('');
+    
+    if (!pattern.test(password)) {
+        input.setCustomValidity('Password must be at least 10 characters long and contain uppercase, lowercase, number and special character');
+        return;
+    }
+    
+    // Check for forbidden words
+    for (const word of forbiddenWords) {
+        if (password.toLowerCase().includes(word)) {
+            input.setCustomValidity(`Password cannot contain the word: ${word}`);
+            return;
+        }
+    }
+}
+</script>
+{% endblock %}

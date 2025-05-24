@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+
+{% block title %}Login{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h3 class="text-center">Login</h3>
+            </div>
+            <div class="card-body">
+                <form method="POST" action="{{ route_prefix | default('', true) }}/login" class="needs-validation" novalidate>
+                    <div class="mb-3">
+                        <label for="username" class="form-label">Username</label>
+                        <input type="text" 
+                               class="form-control" 
+                               id="username" 
+                               name="username" 
+                               required
+                               oninvalid="this.setCustomValidity('Please enter your username')"
+                               oninput="this.setCustomValidity('')">
+                        <div class="invalid-feedback">
+                            Please enter your username
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="password" class="form-label">Password</label>
+                        <input type="password" 
+                               class="form-control" 
+                               id="password" 
+                               name="password" 
+                               required
+                               oninvalid="this.setCustomValidity('Please enter your password')"
+                               oninput="this.setCustomValidity('')">
+                        <div class="invalid-feedback">
+                            Please enter your password
+                        </div>
+                    </div>
+                    <div class="d-grid">
+                        <button type="submit" class="btn btn-primary">Login</button>
+                    </div>
+                </form>
+                {% if error %}
+                    <p class="text-danger text-center mt-3">{{ error }}</p>
+                {% endif %}
+            </div>
+            <div class="card-footer text-center">
+                 <p><a href="{{ route_prefix | default('', true) }}/forgot-password">Forgot Password?</a></p>
+                 <p>Don't have an account? <a href="{{ route_prefix | default('', true) }}/register">Register here</a>.</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Enable Bootstrap form validation
+(function () {
+    'use strict'
+    var forms = document.querySelectorAll('.needs-validation')
+    Array.prototype.slice.call(forms).forEach(function (form) {
+        form.addEventListener('submit', function (event) {
+            if (!form.checkValidity()) {
+                event.preventDefault()
+                event.stopPropagation()
+            }
+            form.classList.add('was-validated')
+        }, false)
+    })
+})()
+</script>
+{% endblock %}

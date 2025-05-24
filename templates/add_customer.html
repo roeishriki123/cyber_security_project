@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+
+{% block title %}Add Customer{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h3 class="text-center">Add New Customer</h3>
+            </div>
+            <div class="card-body">
+                 <form method="POST" action="{{ route_prefix | default('', true) }}/add-customer" class="needs-validation" novalidate>
+                    <div class="mb-3">
+                        <label for="name" class="form-label">Name</label>
+                        <input type="text" 
+                               class="form-control" 
+                               id="name" 
+                               name="name" 
+                               required
+                               oninvalid="this.setCustomValidity('Please enter customer name')"
+                               oninput="this.setCustomValidity('')">
+                        <div class="invalid-feedback">
+                            Please enter customer name
+                        </div>
+                    </div>
+                     <div class="mb-3">
+                        <label for="email" class="form-label">Email</label>
+                        <input type="email" 
+                               class="form-control" 
+                               id="email" 
+                               name="email" 
+                               required
+                               pattern="[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$"
+                               oninvalid="this.setCustomValidity('Please enter a valid email address')"
+                               oninput="this.setCustomValidity('')">
+                        <div class="invalid-feedback">
+                            Please enter a valid email address
+                        </div>
+                    </div>
+                     <div class="mb-3">
+                        <label for="phone" class="form-label">Phone</label>
+                        <input type="tel" 
+                               class="form-control" 
+                               id="phone" 
+                               name="phone" 
+                               required
+                               pattern="[0-9]{10}"
+                               oninvalid="this.setCustomValidity('Please enter a 10-digit phone number')"
+                               oninput="this.setCustomValidity('')">
+                        <div class="invalid-feedback">
+                            Please enter a 10-digit phone number
+                        </div>
+                    </div>
+                     <div class="mb-3">
+                        <label for="address" class="form-label">Address</label>
+                        <input type="text" 
+                               class="form-control" 
+                               id="address" 
+                               name="address" 
+                               required
+                               oninvalid="this.setCustomValidity('Please enter customer address')"
+                               oninput="this.setCustomValidity('')">
+                        <div class="invalid-feedback">
+                            Please enter customer address
+                        </div>
+                    </div>
+                    <div class="d-grid">
+                        <button type="submit" class="btn btn-primary">Add Customer</button>
+                    </div>
+                </form>
+
+                {% if message %}
+                    <p class="text-success text-center mt-3">
+                    {% if is_vulnerable %}{{ message | safe }}{% else %}{{ message }}{% endif %}
+                    </p>
+                {% endif %}
+                {% if error %}
+                    <p class="text-danger text-center mt-3">
+                        {% if 'email' in error %}
+                            A customer with this email already exists
+                        {% elif 'phone' in error %}
+                            A customer with this phone number already exists
+                        {% else %}
+                            {{ error }}
+                        {% endif %}
+                    </p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Enable Bootstrap form validation
+(function () {
+    'use strict'
+    var forms = document.querySelectorAll('.needs-validation')
+    Array.prototype.slice.call(forms).forEach(function (form) {
+        form.addEventListener('submit', function (event) {
+            if (!form.checkValidity()) {
+                event.preventDefault()
+                event.stopPropagation()
+            }
+            form.classList.add('was-validated')
+        }, false)
+    })
+})()
+</script>
+{% endblock %}

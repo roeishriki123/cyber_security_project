@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+
+{% block title %}Home{% endblock %}
+
+{% block content %}
+<div class="text-center mt-5">
+    <h1>Welcome to Communication Ltd</h1>
+    <p class="lead">This is the {{ 'secure' if route_prefix == '/secure' else 'vulnerable' }} demo application. Use the navigation bar to login, register, or add a customer.</p>
+</div>
+{% endblock %} 
