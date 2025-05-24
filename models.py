@@ -2,6 +2,7 @@ from sqlalchemy import Boolean, Column, Integer, String, ForeignKey, DateTime, T
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from datetime import datetime, timedelta
+from sqlalchemy.sql import func
 
 Base = declarative_base()
 
@@ -14,17 +15,19 @@ class User(Base):
     hashed_password = Column(String)
     salt = Column(String)
     is_active = Column(Boolean, default=True)
+    failed_login_attempts = Column(Integer, default=0)
+    last_failed_login = Column(DateTime, nullable=True)
 
     # Relationship to password history
-    password_history = relationship("PasswordHistory", back_populates="user", cascade="all, delete-orphan")
+    password_history = relationship("PasswordHistory", back_populates="user", order_by="PasswordHistory.timestamp.desc()")
 
 class PasswordHistory(Base):
     __tablename__ = "password_history"
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"))
-    hashed_password = Column(String)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    hashed_password = Column(String, nullable=False)
+    timestamp = Column(DateTime, server_default=func.now())
 
     # Relationship to user
     user = relationship("User", back_populates="password_history")
@@ -46,7 +49,7 @@ class PasswordResetToken(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     token = Column(String, unique=True, index=True, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    expires_at = Column(DateTime)
 
     user = relationship("User")
 

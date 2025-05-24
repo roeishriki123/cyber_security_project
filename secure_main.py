@@ -11,8 +11,9 @@ from sqlalchemy import and_
 import hashlib
 from datetime import datetime, timedelta
 import config
-import html  # Add this import for HTML escaping
+import html  # i Added this import for HTML escaping
 from email_utils import send_reset_code
+from security import is_login_blocked, validate_password # Import necessary functions from security.py
 
 # We will NOT import pickle, subprocess here as they are sources of vulnerabilities
 
@@ -43,49 +44,14 @@ def secure_home(request: Request):
 
 @app.post("/secure/register")
 def register_secure(request: Request, username: str = Form(...), password: str = Form(...), email: str = Form(...), db: Session = Depends(get_db)):
-    # Check password complexity
-    if len(password) < config.PASSWORD_MIN_LENGTH:
-        return templates.TemplateResponse("register.html", {
-            "request": request,
-            "error": f"Password must be at least {config.PASSWORD_MIN_LENGTH} characters long",
-            "route_prefix": "/secure"
-        })
-    
-    if config.PASSWORD_REQUIRE_UPPER and not any(c.isupper() for c in password):
-        return templates.TemplateResponse("register.html", {
-            "request": request,
-            "error": "Password must contain at least one uppercase letter",
-            "route_prefix": "/secure"
-        })
-    
-    if config.PASSWORD_REQUIRE_LOWER and not any(c.islower() for c in password):
-        return templates.TemplateResponse("register.html", {
-            "request": request,
-            "error": "Password must contain at least one lowercase letter",
-            "route_prefix": "/secure"
-        })
-    
-    if config.PASSWORD_REQUIRE_DIGITS and not any(c.isdigit() for c in password):
-        return templates.TemplateResponse("register.html", {
-            "request": request,
-            "error": "Password must contain at least one digit",
-            "route_prefix": "/secure"
-        })
-    
-    if config.PASSWORD_REQUIRE_SPECIAL and not any(c in config.SPECIAL_CHARS for c in password):
-        return templates.TemplateResponse("register.html", {
-            "request": request,
-            "error": "Password must contain at least one special character",
-            "route_prefix": "/secure"
-        })
-    
-    # Check if password is in common passwords list
-    if password.lower() in [p.lower() for p in config.COMMON_PASSWORDS]:
-        return templates.TemplateResponse("register.html", {
-            "request": request,
-            "error": "Password is too common. Please choose a stronger password",
-            "route_prefix": "/secure"
-        })
+    # Check password complexity using validate_password from security.py
+    is_valid, error_message = validate_password(password)
+    if not is_valid:
+         return templates.TemplateResponse("register.html", {
+             "request": request,
+             "error": error_message,
+             "route_prefix": "/secure"
+         })
 
     # Check if user already exists
     existing_user = db.query(User).filter(User.email == email).first()
@@ -113,7 +79,7 @@ def register_secure(request: Request, username: str = Form(...), password: str =
         salt="pbkdf2_managed"
     )
     
-    # Add to password history
+    # Add initial password to history
     password_history = PasswordHistory(
         user=new_user,
         hashed_password=hashed_password
@@ -142,15 +108,42 @@ def login_form_secure(request: Request):
 def login_secure(request: Request, username: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
     user = db.query(User).filter(User.username == username).first()
 
-    if user and pbkdf2_sha256.verify(password, user.hashed_password):
-        # Generate session token
-        session_token = secrets.token_urlsafe(32)
-        active_sessions.add(session_token)
-        
-        response = RedirectResponse(url="/secure/add-customer", status_code=303)
-        response.set_cookie(key="session_token", value=session_token, httponly=True, secure=False)
-        return response
+    if user:
+        # Check if login is blocked
+        if is_login_blocked(user.last_failed_login, user.failed_login_attempts):
+            return templates.TemplateResponse("login.html", {
+                "request": request,
+                "error": "Account is temporarily locked due to too many failed login attempts.",
+                "route_prefix": "/secure"
+            })
+            
+        if pbkdf2_sha256.verify(password, user.hashed_password):
+            # Successful login: reset failed attempts
+            user.failed_login_attempts = 0
+            user.last_failed_login = None
+            db.commit()
+
+            # Generate session token
+            session_token = secrets.token_urlsafe(32)
+            active_sessions.add(session_token)
+            
+            response = RedirectResponse(url="/secure/add-customer", status_code=303)
+            response.set_cookie(key="session_token", value=session_token, httponly=True, secure=False)
+            return response
+        else:
+            # Failed login: increment failed attempts and update last failed login time
+            user.failed_login_attempts += 1
+            user.last_failed_login = datetime.utcnow()
+            db.commit()
+
+            return templates.TemplateResponse("login.html", {
+                "request": request,
+                "error": "Invalid credentials",
+                "route_prefix": "/secure"
+            })
     else:
+        # User not found: also increment a counter or use a delayed response to prevent enumeration
+        # For simplicity here, just return generic error
         return templates.TemplateResponse("login.html", {
             "request": request,
             "error": "Invalid credentials",
@@ -221,6 +214,14 @@ def forgot_password_request_secure(request: Request, email: str = Form(...), db:
     user = db.query(User).filter(User.email == email).first()
 
     if user:
+        # Check if account is locked due to failed login attempts
+        if is_login_blocked(user.last_failed_login, user.failed_login_attempts):
+             return templates.TemplateResponse("forgot_password.html", {
+                 "request": request,
+                 "error": "Account is temporarily locked due to too many failed login attempts. Please try again later.",
+                 "route_prefix": "/secure"
+             })
+
         # Generate a SHA-1 token
         token_string = hashlib.sha1(f"{user.email}{datetime.now().timestamp()}".encode()).hexdigest()
         print(f"[DEBUG] Generated SHA1 code: {token_string}")
@@ -249,7 +250,7 @@ def forgot_password_request_secure(request: Request, email: str = Form(...), db:
                 "route_prefix": "/secure"
             })
     else:
-        print(f"[DEBUG] No user found for email: {email}")
+        # Return a generic message to avoid exposing valid emails
         return templates.TemplateResponse("forgot_password.html", {
             "request": request,
             "message": "If a user with that email exists, a reset code has been sent.",
@@ -352,8 +353,40 @@ def reset_password_secure(request: Request, token: str, new_password: str = Form
         # Find user by email
         user = db.query(User).filter(User.email == email).first()
         if user:
+            # Check against password history
+            # Fetch last N passwords (excluding the current one if it's being changed)
+            password_history = db.query(PasswordHistory).filter(PasswordHistory.user_id == user.id).order_by(PasswordHistory.timestamp.desc()).limit(config.password_config.PASSWORD_HISTORY).all()
+            
+            # Check if the new password is in history
+            new_hashed_password = pbkdf2_sha256.hash(new_password)
+            for history_entry in password_history:
+                if pbkdf2_sha256.verify(new_password, history_entry.hashed_password):
+                     return templates.TemplateResponse("change_password.html", {
+                         "request": request,
+                         "token": token,
+                         "error": f"New password cannot be one of your last {config.password_config.PASSWORD_HISTORY} passwords.",
+                         "route_prefix": "/secure"
+                     })
+
+
             # Update the password
-            user.hashed_password = pbkdf2_sha256.hash(new_password)
+            user.hashed_password = new_hashed_password
+            
+            # Add new password to history
+            new_history_entry = PasswordHistory(
+                user_id=user.id,
+                hashed_password=new_hashed_password
+            )
+            db.add(new_history_entry)
+
+            # Clean up old history entries if exceeding the limit
+            current_history_count = db.query(PasswordHistory).filter(PasswordHistory.user_id == user.id).count()
+            if current_history_count > config.password_config.PASSWORD_HISTORY:
+                 oldest_entries = db.query(PasswordHistory).filter(PasswordHistory.user_id == user.id).order_by(PasswordHistory.timestamp.asc()).limit(current_history_count - config.password_config.PASSWORD_HISTORY).all()
+                 for entry in oldest_entries:
+                     db.delete(entry)
+
+
             db.commit()
             
             # Clean up tokens
@@ -375,12 +408,109 @@ def reset_password_secure(request: Request, token: str, new_password: str = Form
             })
     except Exception as e:
         print(f"Error updating password: {str(e)}")
+        db.rollback() # Rollback changes in case of error
         return templates.TemplateResponse("change_password.html", {
             "request": request,
             "token": token,
             "error": "Error updating password. Please try again.",
             "route_prefix": "/secure"
         })
+
+@app.get("/secure/change-password", response_class=HTMLResponse)
+def change_password_form_secure(request: Request, authenticated: bool = Depends(require_secure_login)):
+    # This endpoint is for authenticated users to change their password
+    # It's different from the reset password flow
+    return templates.TemplateResponse("change_password.html", {"request": request, "route_prefix": "/secure", "token": None})
+
+@app.post("/secure/change-password", response_class=HTMLResponse)
+def change_password_secure(request: Request, current_password: str = Form(...), new_password: str = Form(...),
+                   confirm_password: str = Form(...), db: Session = Depends(get_db), authenticated: bool = Depends(require_secure_login)):
+    # This endpoint is for authenticated users to change their password
+    # It's different from the reset password flow
+
+    # Get the current logged-in user (you'd need a way to get the user from the session token)
+    # For this example, let's assume you can get the user object based on authentication
+    # Replace this with your actual logic to get the authenticated user
+    user = db.query(User).filter(User.username == "<logged_in_username>").first() # Replace with actual user retrieval
+
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if new_password != confirm_password:
+        return templates.TemplateResponse("change_password.html", {
+            "request": request,
+            "error": "New passwords do not match.",
+            "route_prefix": "/secure",
+            "token": None
+        })
+
+    # Verify current password
+    if not pbkdf2_sha256.verify(current_password, user.hashed_password):
+        return templates.TemplateResponse("change_password.html", {
+            "request": request,
+            "error": "Invalid current password.",
+            "route_prefix": "/secure",
+            "token": None
+        })
+
+    # Check against password history
+    password_history = db.query(PasswordHistory).filter(PasswordHistory.user_id == user.id).order_by(PasswordHistory.timestamp.desc()).limit(config.password_config.PASSWORD_HISTORY).all()
+    new_hashed_password = pbkdf2_sha256.hash(new_password)
+    for history_entry in password_history:
+        if pbkdf2_sha256.verify(new_password, history_entry.hashed_password):
+             return templates.TemplateResponse("change_password.html", {
+                 "request": request,
+                 "error": f"New password cannot be one of your last {config.password_config.PASSWORD_HISTORY} passwords.",
+                 "route_prefix": "/secure",
+                 "token": None
+             })
+
+
+    try:
+        # Update the password
+        user.hashed_password = new_hashed_password
+
+        # Add new password to history
+        new_history_entry = PasswordHistory(
+            user_id=user.id,
+            hashed_password=new_hashed_password
+        )
+        db.add(new_history_entry)
+
+        # Clean up old history entries if exceeding the limit
+        current_history_count = db.query(PasswordHistory).filter(PasswordHistory.user_id == user.id).count()
+        if current_history_count > config.password_config.PASSWORD_HISTORY:
+             oldest_entries = db.query(PasswordHistory).filter(PasswordHistory.user_id == user.id).order_by(PasswordHistory.timestamp.asc()).limit(current_history_count - config.password_config.PASSWORD_HISTORY).all()
+             for entry in oldest_entries:
+                 db.delete(entry)
+
+        db.commit()
+
+        return templates.TemplateResponse("change_password.html", {
+            "request": request,
+            "message": "Password changed successfully.",
+            "route_prefix": "/secure",
+            "token": None
+        })
+    except Exception as e:
+        print(f"Error updating password: {str(e)}")
+        db.rollback() # Rollback changes in case of error
+        return templates.TemplateResponse("change_password.html", {
+            "request": request,
+            "error": "Error updating password. Please try again.",
+            "route_prefix": "/secure",
+            "token": None
+        })
+
+@app.get("/secure/logout")
+def secure_logout():
+    response = RedirectResponse(url="/secure/login", status_code=303)
+    # Invalidate session token (remove from active_sessions set)
+    session_token = Cookie(None)(__request=Request)
+    if session_token in active_sessions:
+        active_sessions.remove(session_token)
+    response.delete_cookie(key="session_token")
+    return response
 
 # We will add other secure endpoints (/forgot-password, /change-password, etc.) here
 

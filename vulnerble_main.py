@@ -24,54 +24,6 @@ templates = Jinja2Templates(directory="templates")
 reset_tokens = {}  # {token: email}
 reset_codes = {}   # {email: {"code": code, "expires": expiration_time}}
 
-def send_reset_email(to_email: str, reset_code: str):
-    # Email configuration
-    sender_email = "your-email@gmail.com"  # Replace with your email
-    sender_password = "your-app-password"   # Replace with your app password
-    
-    # Create message
-    msg = MIMEMultipart()
-    msg['From'] = sender_email
-    msg['To'] = to_email
-    msg['Subject'] = "Password Reset Code"
-    
-    # Email body
-    body = f"""
-    Hello,
-    
-    You have requested to reset your password. Your reset code is:
-    
-    {reset_code}
-    
-    This code will expire in 5 minutes.
-    
-    If you did not request this password reset, please ignore this email.
-    
-    Best regards,
-    Communication LTD Team
-    """
-    
-    msg.attach(MIMEText(body, 'plain'))
-    
-    try:
-        # Create SMTP session
-        server = smtplib.SMTP('smtp.gmail.com', 587)
-        server.starttls()
-        
-        # Login to the server
-        server.login(sender_email, sender_password)
-        
-        # Send email
-        text = msg.as_string()
-        server.sendmail(sender_email, to_email, text)
-        
-        # Close the server connection
-        server.quit()
-        return True
-    except Exception as e:
-        print(f"Failed to send email: {str(e)}")
-        return False
-
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request):
     return templates.TemplateResponse("home.html", {"request": request})
@@ -172,30 +124,6 @@ def add_customer(request: Request, name: str = Form(...), email: str = Form(...)
         "request": request,
         "message": f"Customer '{name}' added!"
         ,"is_vulnerable": True
-    })
-
-@app.post("/search")
-def search(query: str = Form(...)):
-    result = subprocess.check_output(f"grep -r {query} .", shell=True)
-    return {"results": result.decode()}
-
-@app.post("/save_preferences")
-def save_preferences(preferences: str = Form(...)):
-    user_prefs = pickle.loads(preferences.encode())
-    return {"status": "Preferences saved"}
-
-@app.get("/files/{filename}")
-def get_file(filename: str):
-    file_path = os.path.join("uploads", filename)
-    with open(file_path, "r") as f:
-        return {"content": f.read()}
-
-@app.get("/profile")
-def profile(request: Request):
-    user_input = request.query_params.get("name", "")
-    return templates.TemplateResponse("base.html", {
-        "request": request,
-        "user_input": user_input
     })
 
 @app.get("/forgot-password", response_class=HTMLResponse)
