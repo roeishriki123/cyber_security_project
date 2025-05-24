@@ -12,12 +12,65 @@ from passlib.hash import pbkdf2_sha256
 import hashlib
 import secrets
 from fastapi import Cookie
+from datetime import datetime, timedelta
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from email_utils import send_reset_code
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 
 reset_tokens = {}  # {token: email}
-reset_codes = {}   # {email: code}
+reset_codes = {}   # {email: {"code": code, "expires": expiration_time}}
+
+def send_reset_email(to_email: str, reset_code: str):
+    # Email configuration
+    sender_email = "your-email@gmail.com"  # Replace with your email
+    sender_password = "your-app-password"   # Replace with your app password
+    
+    # Create message
+    msg = MIMEMultipart()
+    msg['From'] = sender_email
+    msg['To'] = to_email
+    msg['Subject'] = "Password Reset Code"
+    
+    # Email body
+    body = f"""
+    Hello,
+    
+    You have requested to reset your password. Your reset code is:
+    
+    {reset_code}
+    
+    This code will expire in 5 minutes.
+    
+    If you did not request this password reset, please ignore this email.
+    
+    Best regards,
+    Communication LTD Team
+    """
+    
+    msg.attach(MIMEText(body, 'plain'))
+    
+    try:
+        # Create SMTP session
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        
+        # Login to the server
+        server.login(sender_email, sender_password)
+        
+        # Send email
+        text = msg.as_string()
+        server.sendmail(sender_email, to_email, text)
+        
+        # Close the server connection
+        server.quit()
+        return True
+    except Exception as e:
+        print(f"Failed to send email: {str(e)}")
+        return False
 
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request):
@@ -150,16 +203,35 @@ def forgot_password_form(request: Request):
     return templates.TemplateResponse("forgot_password.html", {"request": request})
 
 @app.post("/forgot-password")
-def forgot_password(email: str = Form(...), db: Session = Depends(get_db)):
+def forgot_password(request: Request, email: str = Form(...), db: Session = Depends(get_db)):
     sql = f"SELECT * FROM users WHERE email = '{email}'"
     result = db.execute(text(sql)).fetchone()
     if result:
-        random_value = secrets.token_urlsafe(16)
-        code = hashlib.sha1(random_value.encode()).hexdigest()
-        reset_codes[email] = code
-        print(f"Simulated email to {email}: Your reset code is: {code}")
-        return RedirectResponse(url="/enter-code?email=" + email, status_code=303)
-    return HTMLResponse("Email not found", status_code=400)
+        # Generate code using email and timestamp for uniqueness
+        timestamp = datetime.now().timestamp()
+        code = hashlib.sha1(f"{email}{timestamp}".encode()).hexdigest()
+        
+        # Store code with expiration time (5 minutes)
+        reset_codes[email] = {
+            "code": code,
+            "expires": datetime.now() + timedelta(minutes=5)
+        }
+        
+        # Send the reset code via email
+        if send_reset_code(email, code):
+            print(f"Reset code sent to {email}: {code}")
+            return RedirectResponse(url="/enter-code?email=" + email, status_code=303)
+        else:
+            return templates.TemplateResponse("forgot_password.html", {
+                "request": request,
+                "error": "Failed to send reset code. Please try again."
+            })
+    
+    # Return a generic message to avoid exposing valid emails
+    return templates.TemplateResponse("forgot_password.html", {
+        "request": request,
+        "message": "If a user with that email exists, a reset code has been sent."
+    })
 
 @app.get("/enter-code", response_class=HTMLResponse)
 def enter_code_form(request: Request, email: str = ""):
@@ -167,13 +239,20 @@ def enter_code_form(request: Request, email: str = ""):
 
 @app.post("/enter-code")
 def enter_code(request: Request, code: str = Form(...), email: str = Form(...), db: Session = Depends(get_db)):
-    for user_email, stored_code in reset_codes.items():
-        if code == stored_code:
-            # Generate a token for password reset
-            token = secrets.token_urlsafe(16)
-            reset_tokens[token] = user_email
-            reset_codes.pop(user_email)
-            return RedirectResponse(url=f"/reset-password/{token}", status_code=303)
+    if email not in reset_codes:
+        return HTMLResponse("No reset code found. Please request a new one.", status_code=400)
+    
+    stored_data = reset_codes[email]
+    if datetime.now() > stored_data["expires"]:
+        del reset_codes[email]  # Remove expired code
+        return HTMLResponse("Reset code has expired. Please request a new one.", status_code=400)
+    
+    if code == stored_data["code"]:
+        # Generate a token for password reset
+        token = secrets.token_urlsafe(16)
+        reset_tokens[token] = email
+        return RedirectResponse(url=f"/reset-password/{token}", status_code=303)
+    
     return HTMLResponse("Invalid code", status_code=400)
 
 @app.get("/reset-password/{token}", response_class=HTMLResponse)
@@ -189,10 +268,26 @@ def reset_password(token: str, new_password: str = Form(...), confirm_password: 
     if new_password != confirm_password:
         return HTMLResponse("Passwords do not match", status_code=400)
     email = reset_tokens.pop(token)
-    hashed_password = pbkdf2_sha256.hash(new_password)
+    
+    # Check which hashing algorithm to use based on the user's salt
+    sql = f"SELECT salt FROM users WHERE email = '{email}'"
+    result = db.execute(text(sql)).fetchone()
+    
+    if result and result.salt == "pbkdf2_managed":
+        # User is from secure version, use PBKDF2
+        hashed_password = pbkdf2_sha256.hash(new_password)
+    else:
+        # User is from vulnerable version, use SHA-256
+        hashed_password = hashlib.sha256(new_password.encode()).hexdigest()
+    
     sql = f"UPDATE users SET hashed_password = '{hashed_password}' WHERE email = '{email}'"
     db.execute(text(sql))
     db.commit()
+    
+    # Remove the reset code only after successful password change
+    if email in reset_codes:
+        reset_codes.pop(email)
+    
     return HTMLResponse("Password has been reset successfully!", status_code=200)
 
 @app.get("/change-password", response_class=HTMLResponse)

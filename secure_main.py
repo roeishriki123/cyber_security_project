@@ -12,6 +12,7 @@ import hashlib
 from datetime import datetime, timedelta
 import config
 import html  # Add this import for HTML escaping
+from email_utils import send_reset_code
 
 # We will NOT import pickle, subprocess here as they are sources of vulnerabilities
 
@@ -30,6 +31,9 @@ active_sessions = set() # Stores session tokens
 
 # In-memory storage for reset codes (for demo purposes)
 reset_codes = {}  # {email: {"code": code, "expires": expiration_time}}
+
+# Add this at the top with other global variables
+reset_tokens = {}  # {token: email}
 
 # --- SECURE ENDPOINTS ---
 
@@ -212,40 +216,62 @@ def forgot_password_form_secure(request: Request):
 
 @app.post("/secure/forgot-password")
 def forgot_password_request_secure(request: Request, email: str = Form(...), db: Session = Depends(get_db)):
+    print(f"[DEBUG] Forgot password request for email: {email}")
     # Find the user by email using ORM
     user = db.query(User).filter(User.email == email).first()
 
     if user:
-        # Generate a simple SHA-1 token
+        # Generate a SHA-1 token
         token_string = hashlib.sha1(f"{user.email}{datetime.now().timestamp()}".encode()).hexdigest()
+        print(f"[DEBUG] Generated SHA1 code: {token_string}")
         
         # Store the code with expiration time (5 minutes)
         reset_codes[email] = {
             "code": token_string,
             "expires": datetime.now() + timedelta(minutes=5)
         }
+        print(f"[DEBUG] Stored reset code for {email}")
         
-        # Print only the token in terminal
-        print(f"[SECURE] Reset token for {email}: {token_string}")
-
-        # Redirect to enter code page
-        return templates.TemplateResponse("enter_code.html", {
-            "request": request,
-            "email": email,
-            "route_prefix": "/secure"
-        })
+        # Send the reset code via email
+        if send_reset_code(email, token_string):
+            print(f"[SECURE] Reset code sent to {email}: {token_string}")
+            return templates.TemplateResponse("enter_code.html", {
+                "request": request,
+                "email": email,
+                "route_prefix": "/secure",
+                "message": "Reset code has been sent to your email."
+            })
+        else:
+            print(f"[DEBUG] Failed to send reset code to {email}")
+            return templates.TemplateResponse("forgot_password.html", {
+                "request": request,
+                "error": "Failed to send reset code. Please try again.",
+                "route_prefix": "/secure"
+            })
     else:
-        # Return a generic message to avoid exposing valid emails
+        print(f"[DEBUG] No user found for email: {email}")
         return templates.TemplateResponse("forgot_password.html", {
             "request": request,
-            "error": "If a user with that email exists, a reset code has been sent.",
+            "message": "If a user with that email exists, a reset code has been sent.",
             "route_prefix": "/secure"
         })
+
+@app.get("/secure/enter-code", response_class=HTMLResponse)
+def enter_code_form_secure(request: Request, email: str = ""):
+    return templates.TemplateResponse("enter_code.html", {
+        "request": request,
+        "email": email,
+        "route_prefix": "/secure"
+    })
 
 @app.post("/secure/enter-code")
 def enter_code_secure(request: Request, email: str = Form(...), code: str = Form(...), db: Session = Depends(get_db)):
+    print(f"[DEBUG] Enter code attempt for email: {email}, code: {code}")
+    print(f"[DEBUG] Stored codes: {reset_codes}")
+    
     # Check if code exists and is not expired
     if email not in reset_codes:
+        print(f"[DEBUG] No reset code found for {email}")
         return templates.TemplateResponse("enter_code.html", {
             "request": request,
             "email": email,
@@ -255,6 +281,7 @@ def enter_code_secure(request: Request, email: str = Form(...), code: str = Form
     
     stored_code = reset_codes[email]
     if datetime.now() > stored_code["expires"]:
+        print(f"[DEBUG] Reset code expired for {email}")
         del reset_codes[email]  # Remove expired code
         return templates.TemplateResponse("enter_code.html", {
             "request": request,
@@ -265,6 +292,7 @@ def enter_code_secure(request: Request, email: str = Form(...), code: str = Form
     
     # Validate the code
     if code != stored_code["code"]:
+        print(f"[DEBUG] Invalid code for {email}. Expected: {stored_code['code']}, Got: {code}")
         return templates.TemplateResponse("enter_code.html", {
             "request": request,
             "email": email,
@@ -272,31 +300,39 @@ def enter_code_secure(request: Request, email: str = Form(...), code: str = Form
             "route_prefix": "/secure"
         })
     
-    # Code is valid, redirect to change password page
-    response = RedirectResponse(url=f"/secure/change-password/{code}", status_code=303)
-    return response
+    # Code is valid, generate a new token for password reset
+    token = secrets.token_urlsafe(16)
+    reset_tokens[token] = email
+    print(f"[DEBUG] Generated new token for {email}: {token}")
+    
+    # Redirect to reset password page with the new token
+    redirect_url = f"/secure/reset-password/{token}"
+    print(f"[DEBUG] Redirecting to: {redirect_url}")
+    return RedirectResponse(url=redirect_url, status_code=303)
 
-@app.get("/secure/change-password/{token}", response_class=HTMLResponse)
-def change_password_form_secure(request: Request, token: str):
+@app.get("/secure/reset-password/{token}", response_class=HTMLResponse)
+def reset_password_form_secure(request: Request, token: str):
+    print(f"[DEBUG] Reset password form request for token: {token}")
+    print(f"[DEBUG] Available tokens: {reset_tokens}")
+    
+    if token not in reset_tokens:
+        print(f"[DEBUG] Invalid token: {token}")
+        return templates.TemplateResponse("forgot_password.html", {
+            "request": request,
+            "error": "Invalid or expired token. Please request a new reset code.",
+            "route_prefix": "/secure"
+        })
     return templates.TemplateResponse("change_password.html", {
         "request": request,
         "token": token,
         "route_prefix": "/secure"
     })
 
-@app.post("/secure/change-password/{token}")
-def change_password_secure(request: Request, token: str, new_password: str = Form(...), confirm_password: str = Form(...), db: Session = Depends(get_db)):
-    # Find the email associated with this token
-    email = None
-    for e, data in reset_codes.items():
-        if data["code"] == token:
-            email = e
-            break
-    
-    if not email:
-        return templates.TemplateResponse("change_password.html", {
+@app.post("/secure/reset-password/{token}")
+def reset_password_secure(request: Request, token: str, new_password: str = Form(...), confirm_password: str = Form(...), db: Session = Depends(get_db)):
+    if token not in reset_tokens:
+        return templates.TemplateResponse("forgot_password.html", {
             "request": request,
-            "token": token,
             "error": "Invalid or expired token. Please request a new reset code.",
             "route_prefix": "/secure"
         })
@@ -310,14 +346,21 @@ def change_password_secure(request: Request, token: str, new_password: str = For
         })
 
     try:
+        # Get email from token
+        email = reset_tokens[token]
+        
         # Find user by email
         user = db.query(User).filter(User.email == email).first()
         if user:
             # Update the password
             user.hashed_password = pbkdf2_sha256.hash(new_password)
             db.commit()
-            # Remove the used reset code
-            del reset_codes[email]
+            
+            # Clean up tokens
+            del reset_tokens[token]
+            if email in reset_codes:
+                del reset_codes[email]
+                
             return templates.TemplateResponse("login.html", {
                 "request": request,
                 "message": "Password changed successfully. Please log in.",

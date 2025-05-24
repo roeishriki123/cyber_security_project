@@ -29,12 +29,17 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-3. Run the secure version: (http://127.0.0.1:8000/secure/)
+3. Initialize the database:
+```bash
+python init_db.py
+```
+
+4. Run the secure version: (http://127.0.0.1:8000/secure/)
 ```bash
 uvicorn secure_main:app --reload
 ```
 
-4. Run the vulnerable version: (http://127.0.0.1:8000/)
+5. Run the vulnerable version: (http://127.0.0.1:8000/)
 ```bash
 uvicorn vulnerble_main:app --reload
 ```
