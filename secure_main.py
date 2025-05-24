@@ -26,14 +26,11 @@ templates = Jinja2Templates(directory="templates")
 # Configure Jinja2 to auto-escape HTML
 templates.env.autoescape = True
 
-# In-memory storage for secure sessions (for demo purposes)
-# In a real app, use a proper server-side session store or JWTs
 active_sessions = set() # Stores session tokens
 
-# In-memory storage for reset codes (for demo purposes)
 reset_codes = {}  # {email: {"code": code, "expires": expiration_time}}
 
-# Add this at the top with other global variables
+
 reset_tokens = {}  # {token: email}
 
 # --- SECURE ENDPOINTS ---
@@ -512,10 +509,5 @@ def secure_logout():
     response.delete_cookie(key="session_token")
     return response
 
-# We will add other secure endpoints (/forgot-password, /change-password, etc.) here
 
-# --- VULNERABLE ENDPOINTS (For comparison, not in secure_main) ---
-# @app.post("/search")... (vulnerable command injection)
-# @app.post("/save_preferences")... (vulnerable deserialization)
-# @app.get("/files/{filename}")... (vulnerable path traversal)
-# @app.get("/profile")... (vulnerable XSS) 
+
